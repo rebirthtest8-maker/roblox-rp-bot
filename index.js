@@ -24,21 +24,12 @@ const CH_POJAZDY = '1560931141182292048';
 const ROLE_RP = '1560927722711158835';
 const CH_RP = '1560928873280176238';
 
-// Nagłówki przeglądarki zapobiegające blokadom Cloudflare / Roblox
-const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
-  'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Cache-Control': 'no-cache',
-  'Pragma': 'no-cache'
-};
-
 function generateNumericCode() {
   const num = Math.floor(100000 + Math.random() * 900000);
   return `RP-${num}`;
 }
 
-// Baza danych SQLite (zoptymalizowana pod Railway Volume)
+// Baza danych SQLite zoptymalizowana pod Railway Volume
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 const db = new Database(DB_PATH);
@@ -82,7 +73,7 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// Pętla sprawdzająca czas rozpoczęcia zaplanowanego RP
+// Pętla sprawdzająca czas rozpoczęcia RP i pingująca @everyone
 setInterval(async () => {
   const now = Math.floor(Date.now() / 1000);
   const pendingRps = db.prepare('SELECT * FROM scheduled_rp WHERE status = "active" AND dateTimeEpoch <= ?').all(now);
@@ -95,7 +86,7 @@ setInterval(async () => {
         const embed = new EmbedBuilder()
           .setColor(0x2ECC71)
           .setTitle('🚨 ROZPOCZĘCIE ROLEPLAY')
-          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy wszystkich do gry!`)
+          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy do gry!`)
           .setTimestamp();
         await channel.send({ content: '@everyone', embeds: [embed] });
       }
@@ -132,7 +123,7 @@ client.once('ready', async () => {
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    // ==================== OBSŁUGA KOMEND SLASH ====================
+    // ==================== KOMENDY SLASH ====================
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'setup') {
         if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
@@ -142,7 +133,7 @@ client.on('interactionCreate', async (interaction) => {
         const embed = new EmbedBuilder()
           .setColor(0xF26522)
           .setTitle('🏙️ URZĄD MIASTA — PANEL GŁÓWNY')
-          .setDescription('Wybierz jedną z opcji poniżej, aby połączyć konto Roblox, wyrobić dowód tożsamości lub zarejestrować pojazd w bazie.');
+          .setDescription('Wybierz jedną z opcji poniżej, aby połączyć konto Roblox, wyrobić dowód tożsamości lub zarejestrować swój pojazd.');
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('btn_verify').setLabel('Zweryfikuj Roblox').setStyle(ButtonStyle.Success).setEmoji('🔗'),
@@ -221,64 +212,67 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.editReply({ content: '❌ Błąd sesji weryfikacyjnej. Wpisz swój nick ponownie w panelu głównym.' });
         }
 
-        const profileUrl = `https://www.roblox.com/users/${userData.robloxId}/profile`;
-        let fetchedDesc = '';
-        let fetchedStatus = '';
-        let htmlContent = '';
+        const targetCode = userData.verifyCode; // np. RP-492104
+        const targetClean = targetCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        let fetchedDescription = '';
+        let verified = false;
 
+        // 1. Próba pobrania opisu przez RoProxy (omija blokady IP datacenter)
         try {
-          // 1. Sprawdzenie JSON API z nagłówkami przeglądarki
-          const resUser = await fetch(`https://users.roblox.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
-            headers: BROWSER_HEADERS
+          const proxyRes = await fetch(`https://users.roproxy.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
+            headers: { 'Cache-Control': 'no-cache' }
           });
-          if (resUser.ok) {
-            const jUser = await resUser.json();
-            fetchedDesc = jUser.description || '';
+          if (proxyRes.ok) {
+            const data = await proxyRes.json();
+            fetchedDescription = data.description || '';
           }
-
-          // 2. Pobranie statusu użytkownika
-          const resStatus = await fetch(`https://users.roblox.com/v1/users/${userData.robloxId}/status?_=${Date.now()}`, {
-            headers: BROWSER_HEADERS
-          });
-          if (resStatus.ok) {
-            const jStatus = await resStatus.json();
-            fetchedStatus = jStatus.status || '';
-          }
-
-          // 3. Fallback: Odczytanie czystego HTML profilu (omija blokady Cloudflare API)
-          const resHtml = await fetch(profileUrl, { headers: BROWSER_HEADERS });
-          if (resHtml.ok) {
-            htmlContent = await resHtml.text();
-          }
-        } catch (fetchErr) {
-          console.error('Błąd podczas pobierania danych profilu Roblox:', fetchErr);
+        } catch (e) {
+          console.error('RoProxy error:', e);
         }
 
-        // Znormalizowane porównanie bez spacji i kresek
-        const targetClean = userData.verifyCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const combinedText = `${fetchedDesc} ${fetchedStatus}`.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        const htmlClean = htmlContent.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        // 2. Bezpośredni fallback do oficjalnego API Roblox
+        if (!fetchedDescription) {
+          try {
+            const directRes = await fetch(`https://users.roblox.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
+              headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Cache-Control': 'no-cache' 
+              }
+            });
+            if (directRes.ok) {
+              const data = await directRes.json();
+              fetchedDescription = data.description || '';
+            }
+          } catch (e) {
+            console.error('Roblox Direct API error:', e);
+          }
+        }
 
-        const isVerified = combinedText.includes(targetClean) || htmlClean.includes(targetClean);
+        // Porównanie z usunięciem spacji i myślników
+        const cleanDesc = fetchedDescription.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (cleanDesc.includes(targetClean)) {
+          verified = true;
+        }
 
-        if (isVerified) {
+        if (verified) {
           const member = await interaction.guild.members.fetch(interaction.user.id);
           await member.roles.add(VERIFY_ROLES).catch(err => {
             console.error('Błąd nadawania ról (upewnij się, że rola bota jest wyżej na liście serwera!):', err);
           });
+
           return interaction.editReply({ 
-            content: `✅ **Sukces! Pomyślnie zweryfikowano jako [${userData.robloxUsername}](${profileUrl})!**\nNadano wszystkie role obywatela.` 
+            content: `✅ **SUKCES! Konto [${userData.robloxUsername}](https://www.roblox.com/users/${userData.robloxId}/profile) zostało pomyślnie zweryfikowane!**\nNadano wszystkie role obywatela.` 
           });
         } else {
           return interaction.editReply({ 
-            content: `❌ **Kod nadal nie został wykryty.**\n\nTwój wygenerowany kod to:\n\`\`\`${userData.verifyCode}\`\`\`\n🔗 **Kliknij tutaj i sprawdź swój profil:**\n${profileUrl}\n\n**Co widzi bot:**\n> **Opis:** \`${fetchedDesc || '(pusty)'}\`\n> **Status:** \`${fetchedStatus || '(pusty)'}\`\n\n🛠️ **Rozwiązanie w 2 krokach:**\n1. Otwórz powyższy link. Upewnij się, że to **Twój profil** i że jesteś na niego zalogowany.\n2. Wklej \`${userData.verifyCode}\` w sekcji **About (O mnie)** i wciśnij **Save**.\n*(Jeśli opis nie chce się zapisać przez filtr Robloxa, możesz również na 1 minutę zmienić swój **Display Name** na ten kod i kliknąć przycisk ponownie)*.` 
+            content: `❌ **Kod nie został jeszcze wykryty w opisie profilu.**\n\nTwój kod to:\n\`\`\`${targetCode}\`\`\`\n🔗 **Link do Twojego profilu:** https://www.roblox.com/users/${userData.robloxId}/profile\n\n**Co bot aktualnie odczytał z Twojego "About":**\n> \`${fetchedDescription || '(pole jest puste lub Roblox jeszcze go nie zaktualizował)'}\`\n\n🛠️ **Rozwiązanie krok po kroku:**\n1. Otwórz powyższy link i upewnij się, że to Twoje konto.\n2. Wklej kod w sekcji **About (O mnie)** i kliknij **Save**.\n3. Jeśli Roblox ocenzurował kod na \`###\`, wklej go ze spacjami: **\`${targetCode.split('').join(' ')}\`** (bot i tak go wykryje!).\n4. Odczekaj 10 sekund i kliknij przycisk **Sprawdź profil** ponownie.` 
           });
         }
       }
 
       if (interaction.customId === 'btn_id') {
         const userCheck = db.prepare('SELECT robloxId FROM users WHERE discordId = ?').get(interaction.user.id);
-        if (!userCheck) return interaction.reply({ content: '❌ Musisz najpierw pomyślnie zweryfikować konto Roblox!', ephemeral: true });
+        if (!userCheck) return interaction.reply({ content: '❌ Musisz najpierw zweryfikować konto Roblox!', ephemeral: true });
 
         const count = db.prepare('SELECT COUNT(*) as cnt FROM ids WHERE discordId = ?').get(interaction.user.id).cnt;
         if (count >= 2) return interaction.reply({ content: '❌ Osiągnąłeś maksymalną liczbę postaci (2/2)!', ephemeral: true });
@@ -380,7 +374,6 @@ client.on('interactionCreate', async (interaction) => {
 
         const robloxId = searchJson.data[0].id;
         const robloxUsername = searchJson.data[0].name;
-
         const verifyCode = generateNumericCode();
 
         db.prepare(`
@@ -394,7 +387,7 @@ client.on('interactionCreate', async (interaction) => {
         const embed = new EmbedBuilder()
           .setColor(0xF1C40F)
           .setTitle('🔐 Krok 2: Weryfikacja konta Roblox')
-          .setDescription(`Witaj **${robloxUsername}**!\n\n1. Kliknij w link do swojego profilu: **[Twój Profil Roblox](${profileUrl})**\n2. Wklej poniższy kod w polu **About (O mnie)** i zapisz zmiany:\n\n\`\`\`${verifyCode}\`\`\`\n3. Odczekaj 10 sekund i kliknij przycisk **Sprawdź profil** poniżej:`);
+          .setDescription(`Witaj **${robloxUsername}**!\n\n1. Kliknij w link do swojego profilu: **[Twój Profil Roblox](${profileUrl})**\n2. Wklej poniższy kod w polu **About (O mnie)** i zapisz zmiany:\n\n\`\`\`${verifyCode}\`\`\`\n*(W razie cenzury wpisz kod ze spacjami: \`${verifyCode.split('').join(' ')}\`)*\n\n3. Odczekaj 10 sekund i kliknij poniższy przycisk:`);
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('verify_check').setLabel('Sprawdź profil').setStyle(ButtonStyle.Success)
