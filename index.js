@@ -75,24 +75,24 @@ const client = new Client({
 
 // Pętla sprawdzająca czas rozpoczęcia RP i pingująca @everyone
 setInterval(async () => {
-  const now = Math.floor(Date.now() / 1000);
-  const pendingRps = db.prepare('SELECT * FROM scheduled_rp WHERE status = "active" AND dateTimeEpoch <= ?').all(now);
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const pendingRps = db.prepare('SELECT * FROM scheduled_rp WHERE status = "active" AND dateTimeEpoch <= ?').all(now);
 
-  for (const rp of pendingRps) {
-    db.prepare('UPDATE scheduled_rp SET status = "started" WHERE id = ?').run(rp.id);
-    try {
-      const channel = await client.channels.fetch(CH_RP);
+    for (const rp of pendingRps) {
+      db.prepare('UPDATE scheduled_rp SET status = "started" WHERE id = ?').run(rp.id);
+      const channel = await client.channels.fetch(CH_RP).catch(() => null);
       if (channel) {
         const embed = new EmbedBuilder()
           .setColor(0x2ECC71)
           .setTitle('🚨 ROZPOCZĘCIE ROLEPLAY')
-          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy do gry!`)
+          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy wszystkich do gry!`)
           .setTimestamp();
-        await channel.send({ content: '@everyone', embeds: [embed] });
+        await channel.send({ content: '@everyone', embeds: [embed] }).catch(() => {});
       }
-    } catch (e) {
-      console.error('Błąd powiadomienia o starcie RP:', e);
     }
+  } catch (e) {
+    console.error('Błąd pętli RP:', e);
   }
 }, 15000);
 
@@ -130,10 +130,12 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.reply({ content: '❌ Brak uprawnień administratora.', ephemeral: true });
         }
         
+        await interaction.deferReply({ ephemeral: true });
+
         const embed = new EmbedBuilder()
           .setColor(0xF26522)
           .setTitle('🏙️ URZĄD MIASTA — PANEL GŁÓWNY')
-          .setDescription('Wybierz jedną z opcji poniżej, aby połączyć konto Roblox, wyrobić dowód tożsamości lub zarejestrować swój pojazd.');
+          .setDescription('Wybierz jedną z opcji poniżej, aby zweryfikować konto Roblox, wyrobić dowód tożsamości lub zarejestrować swój pojazd.');
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('btn_verify').setLabel('Zweryfikuj Roblox').setStyle(ButtonStyle.Success).setEmoji('🔗'),
@@ -143,13 +145,15 @@ client.on('interactionCreate', async (interaction) => {
 
         const targetCh = await client.channels.fetch(CH_PANEL);
         await targetCh.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: '✅ Panel został wysłany na kanał!', ephemeral: true });
+        return interaction.editReply({ content: '✅ Panel został wysłany na wyznaczony kanał!' });
       }
 
       if (interaction.commandName === 'zaplanuj-rp') {
         if (!interaction.member.roles.cache.has(ROLE_RP) && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
           return interaction.reply({ content: '❌ Brak uprawnień do planowania RP.', ephemeral: true });
         }
+
+        await interaction.deferReply({ ephemeral: true });
 
         const kto = interaction.options.getString('kto');
         const godzina = interaction.options.getString('godzina');
@@ -160,7 +164,7 @@ client.on('interactionCreate', async (interaction) => {
         const eventDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:00+02:00`);
 
         if (isNaN(eventDate.getTime())) {
-          return interaction.reply({ content: '❌ Błędny format daty (użyj DD/MM/YYYY) lub godziny (użyj GG:MM)!', ephemeral: true });
+          return interaction.editReply({ content: '❌ Błędny format daty (użyj DD/MM/YYYY) lub godziny (użyj GG:MM)!' });
         }
 
         const epoch = Math.floor(eventDate.getTime() / 1000);
@@ -171,10 +175,9 @@ client.on('interactionCreate', async (interaction) => {
             new ButtonBuilder().setCustomId(`rp_reschedule_${kto}_${epoch}_${dataStr}_${godzina}`).setLabel('Przełóż').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId('rp_cancel_active').setLabel('Anuluj').setStyle(ButtonStyle.Danger)
           );
-          return interaction.reply({
+          return interaction.editReply({
             content: `⚠️ Istnieje już aktywne RolePlay zaplanowane na <t:${activeRp.dateTimeEpoch}:F> (<t:${activeRp.dateTimeEpoch}:R>). Co chcesz zrobić?`,
-            components: [manageRow],
-            ephemeral: true
+            components: [manageRow]
           });
         }
 
@@ -188,12 +191,13 @@ client.on('interactionCreate', async (interaction) => {
           new ButtonBuilder().setCustomId('rp_cancel').setLabel('Anuluj').setStyle(ButtonStyle.Danger)
         );
 
-        return interaction.reply({ embeds: [confirmEmbed], components: [confirmRow], ephemeral: true });
+        return interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
       }
     }
 
     // ==================== OBSŁUGA PRZYCISKÓW ====================
     if (interaction.isButton()) {
+      // Modale NIE MOGĄ mieć deferReply!
       if (interaction.customId === 'btn_verify') {
         const modal = new ModalBuilder().setCustomId('modal_verify').setTitle('Weryfikacja Konta Roblox');
         const robloxInput = new TextInputBuilder()
@@ -203,71 +207,6 @@ client.on('interactionCreate', async (interaction) => {
           .setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(robloxInput));
         return interaction.showModal(modal);
-      }
-
-      if (interaction.customId === 'verify_check') {
-        await interaction.deferReply({ ephemeral: true });
-        const userData = db.prepare('SELECT * FROM users WHERE discordId = ?').get(interaction.user.id);
-        if (!userData) {
-          return interaction.editReply({ content: '❌ Błąd sesji weryfikacyjnej. Wpisz swój nick ponownie w panelu głównym.' });
-        }
-
-        const targetCode = userData.verifyCode; // np. RP-492104
-        const targetClean = targetCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        let fetchedDescription = '';
-        let verified = false;
-
-        // 1. Próba pobrania opisu przez RoProxy (omija blokady IP datacenter)
-        try {
-          const proxyRes = await fetch(`https://users.roproxy.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
-            headers: { 'Cache-Control': 'no-cache' }
-          });
-          if (proxyRes.ok) {
-            const data = await proxyRes.json();
-            fetchedDescription = data.description || '';
-          }
-        } catch (e) {
-          console.error('RoProxy error:', e);
-        }
-
-        // 2. Bezpośredni fallback do oficjalnego API Roblox
-        if (!fetchedDescription) {
-          try {
-            const directRes = await fetch(`https://users.roblox.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
-              headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Cache-Control': 'no-cache' 
-              }
-            });
-            if (directRes.ok) {
-              const data = await directRes.json();
-              fetchedDescription = data.description || '';
-            }
-          } catch (e) {
-            console.error('Roblox Direct API error:', e);
-          }
-        }
-
-        // Porównanie z usunięciem spacji i myślników
-        const cleanDesc = fetchedDescription.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (cleanDesc.includes(targetClean)) {
-          verified = true;
-        }
-
-        if (verified) {
-          const member = await interaction.guild.members.fetch(interaction.user.id);
-          await member.roles.add(VERIFY_ROLES).catch(err => {
-            console.error('Błąd nadawania ról (upewnij się, że rola bota jest wyżej na liście serwera!):', err);
-          });
-
-          return interaction.editReply({ 
-            content: `✅ **SUKCES! Konto [${userData.robloxUsername}](https://www.roblox.com/users/${userData.robloxId}/profile) zostało pomyślnie zweryfikowane!**\nNadano wszystkie role obywatela.` 
-          });
-        } else {
-          return interaction.editReply({ 
-            content: `❌ **Kod nie został jeszcze wykryty w opisie profilu.**\n\nTwój kod to:\n\`\`\`${targetCode}\`\`\`\n🔗 **Link do Twojego profilu:** https://www.roblox.com/users/${userData.robloxId}/profile\n\n**Co bot aktualnie odczytał z Twojego "About":**\n> \`${fetchedDescription || '(pole jest puste lub Roblox jeszcze go nie zaktualizował)'}\`\n\n🛠️ **Rozwiązanie krok po kroku:**\n1. Otwórz powyższy link i upewnij się, że to Twoje konto.\n2. Wklej kod w sekcji **About (O mnie)** i kliknij **Save**.\n3. Jeśli Roblox ocenzurował kod na \`###\`, wklej go ze spacjami: **\`${targetCode.split('').join(' ')}\`** (bot i tak go wykryje!).\n4. Odczekaj 10 sekund i kliknij przycisk **Sprawdź profil** ponownie.` 
-          });
-        }
       }
 
       if (interaction.customId === 'btn_id') {
@@ -296,7 +235,68 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
+      // Sprawdzanie kodu weryfikacyjnego
+      if (interaction.customId === 'verify_check') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const userData = db.prepare('SELECT * FROM users WHERE discordId = ?').get(interaction.user.id);
+        if (!userData) {
+          return interaction.editReply({ content: '❌ Nie rozpoczęto procesu weryfikacji. Wpisz swój nick ponownie w panelu.' });
+        }
+
+        const targetCode = userData.verifyCode;
+        const targetClean = targetCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        let fetchedDescription = '';
+        let verified = false;
+
+        // 1. Sprawdzanie przez Bloxlink API (globalna baza graczy Roblox na Discordzie)
+        try {
+          const blRes = await fetch(`https://api.blox.link/v4/public/guilds/${GUILD_ID}/discord-to-roblox/${interaction.user.id}`, { timeout: 3000 });
+          if (blRes.ok) {
+            const blData = await blRes.json();
+            if (blData.robloxID && String(blData.robloxID) === String(userData.robloxId)) {
+              verified = true;
+            }
+          }
+        } catch (e) {}
+
+        // 2. Jeśli brak w Bloxlink — sprawdzanie przez RoProxy z ominięciem blokad Cloudflare
+        if (!verified) {
+          try {
+            const proxyRes = await fetch(`https://users.roproxy.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
+              headers: { 'Cache-Control': 'no-cache' },
+              timeout: 4000
+            });
+            if (proxyRes.ok) {
+              const data = await proxyRes.json();
+              fetchedDescription = data.description || '';
+            }
+          } catch (e) {}
+
+          const cleanDesc = fetchedDescription.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+          if (cleanDesc.includes(targetClean)) {
+            verified = true;
+          }
+        }
+
+        if (verified) {
+          const member = await interaction.guild.members.fetch(interaction.user.id);
+          await member.roles.add(VERIFY_ROLES).catch(err => {
+            console.error('Błąd nadawania ról (upewnij się, że rola bota jest wyżej na liście serwera!):', err);
+          });
+
+          return interaction.editReply({ 
+            content: `✅ **SUKCES! Konto [${userData.robloxUsername}](https://www.roblox.com/users/${userData.robloxId}/profile) zostało pomyślnie zweryfikowane!**\nNadano wszystkie 5 ról obywatela.` 
+          });
+        } else {
+          return interaction.editReply({ 
+            content: `❌ **Kod nie został jeszcze wykryty w sekcji About (O mnie).**\n\nTwój kod to:\n\`\`\`${targetCode}\`\`\`\n🔗 **Link do Twojego profilu:** https://www.roblox.com/users/${userData.robloxId}/profile\n\n**Odczytany opis z profilu:**\n> \`${fetchedDescription || '(pole jest puste lub serwery Roblox jeszcze się nie zaktualizowały)'}\`\n\n🛠️ **Wskazówki:**\n1. Otwórz powyższy link i upewnij się, że jesteś zalogowany na to konto.\n2. Wklej kod w sekcji **About (O mnie)** i wciśnij **Save**.\n3. Jeśli Roblox zamienił kod na \`###\`, wpisz go ze spacją między każdym znakiem: **\`${targetCode.split('').join(' ')}\`** (bot bez problemu go rozpozna).\n4. Odczekaj 10 sekund i kliknij przycisk ponownie.` 
+          });
+        }
+      }
+
       if (interaction.customId.startsWith('rp_confirm_')) {
+        await interaction.deferUpdate();
         const [, , kto, epoch, dataStr, godzina] = interaction.customId.split('_');
         
         db.prepare('INSERT INTO scheduled_rp (plannerName, dateTimeEpoch, dateStr, timeStr) VALUES (?, ?, ?, ?)').run(kto, epoch, dataStr, godzina);
@@ -317,10 +317,11 @@ client.on('interactionCreate', async (interaction) => {
           ]
         });
 
-        return interaction.update({ content: '✅ Wydarzenie RolePlay zostało zaplanowane!', embeds: [], components: [] });
+        return interaction.editReply({ content: '✅ Wydarzenie RolePlay zostało zaplanowane!', embeds: [], components: [] });
       }
 
       if (interaction.customId.startsWith('rp_reschedule_')) {
+        await interaction.deferUpdate();
         const [, , kto, epoch, dataStr, godzina] = interaction.customId.split('_');
         db.prepare('UPDATE scheduled_rp SET status = "cancelled" WHERE status = "active"').run();
         db.prepare('INSERT INTO scheduled_rp (plannerName, dateTimeEpoch, dateStr, timeStr) VALUES (?, ?, ?, ?)').run(kto, epoch, dataStr, godzina);
@@ -339,16 +340,17 @@ client.on('interactionCreate', async (interaction) => {
           ]
         });
 
-        return interaction.update({ content: '✅ Pomyślnie zaktualizowano termin RP.', embeds: [], components: [] });
+        return interaction.editReply({ content: '✅ Pomyślnie zaktualizowano termin RP.', embeds: [], components: [] });
       }
 
       if (interaction.customId === 'rp_cancel_active') {
+        await interaction.deferUpdate();
         db.prepare('UPDATE scheduled_rp SET status = "cancelled" WHERE status = "active"').run();
         const rpChannel = await client.channels.fetch(CH_RP);
         await rpChannel.send({
           embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('🚫 EVENT ROLEPLAY ODWOŁANY').setDescription('Uwaga! Planowane wcześniej wydarzenie RolePlay zostało odwołane.')]
         });
-        return interaction.update({ content: '✅ Wydarzenie zostało anulowane.', embeds: [], components: [] });
+        return interaction.editReply({ content: '✅ Wydarzenie zostało anulowane.', embeds: [], components: [] });
       }
 
       if (interaction.customId === 'rp_cancel') {
@@ -358,6 +360,9 @@ client.on('interactionCreate', async (interaction) => {
 
     // ==================== OBSŁUGA FORMULARZY (MODALI) ====================
     if (interaction.isModalSubmit()) {
+      // Wszystkie modale natychmiast odraczamy, aby zapobiec timeoutom
+      await interaction.deferReply({ ephemeral: true });
+
       if (interaction.customId === 'modal_verify') {
         const inputNick = interaction.fields.getTextInputValue('roblox_nick').trim();
         
@@ -369,7 +374,7 @@ client.on('interactionCreate', async (interaction) => {
         const searchJson = await searchRes.json();
 
         if (!searchJson.data || searchJson.data.length === 0) {
-          return interaction.reply({ content: '❌ Nie odnaleziono gracza o takim nicku na Roblox!', ephemeral: true });
+          return interaction.editReply({ content: '❌ Nie odnaleziono gracza o takim nicku na Roblox!' });
         }
 
         const robloxId = searchJson.data[0].id;
@@ -387,13 +392,13 @@ client.on('interactionCreate', async (interaction) => {
         const embed = new EmbedBuilder()
           .setColor(0xF1C40F)
           .setTitle('🔐 Krok 2: Weryfikacja konta Roblox')
-          .setDescription(`Witaj **${robloxUsername}**!\n\n1. Kliknij w link do swojego profilu: **[Twój Profil Roblox](${profileUrl})**\n2. Wklej poniższy kod w polu **About (O mnie)** i zapisz zmiany:\n\n\`\`\`${verifyCode}\`\`\`\n*(W razie cenzury wpisz kod ze spacjami: \`${verifyCode.split('').join(' ')}\`)*\n\n3. Odczekaj 10 sekund i kliknij poniższy przycisk:`);
+          .setDescription(`Witaj **${robloxUsername}**!\n\n1. Kliknij w link do swojego profilu: **[Twój Profil Roblox](${profileUrl})**\n2. Wklej poniższy kod w polu **About (O mnie)** i zapisz zmiany:\n\n\`\`\`${verifyCode}\`\`\`\n*(W razie cenzury wpisz kod ze spacjami: \`${verifyCode.split('').join(' ')}\`)*\n\n3. Odczekaj około 10 sekund i kliknij poniższy przycisk:`);
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('verify_check').setLabel('Sprawdź profil').setStyle(ButtonStyle.Success)
         );
 
-        return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+        return interaction.editReply({ embeds: [embed], components: [row] });
       }
 
       if (interaction.customId === 'modal_id') {
@@ -403,9 +408,14 @@ client.on('interactionCreate', async (interaction) => {
 
         const userData = db.prepare('SELECT robloxId, robloxUsername FROM users WHERE discordId = ?').get(interaction.user.id);
         
-        const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userData.robloxId}&size=420x420&format=Png&isCircular=false`);
-        const thumbJson = await thumbRes.json();
-        const avatarUrl = thumbJson.data[0]?.imageUrl || 'https://tr.rbxcdn.com/3943d4d7faad76e3d23f738a53e9a4f4/420/420/Image/Png';
+        let avatarUrl = 'https://tr.rbxcdn.com/3943d4d7faad76e3d23f738a53e9a4f4/420/420/Image/Png';
+        try {
+          const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userData.robloxId}&size=420x420&format=Png&isCircular=false`);
+          const thumbJson = await thumbRes.json();
+          if (thumbJson.data && thumbJson.data[0]?.imageUrl) {
+            avatarUrl = thumbJson.data[0].imageUrl;
+          }
+        } catch (e) {}
 
         const count = db.prepare('SELECT COUNT(*) as cnt FROM ids WHERE discordId = ?').get(interaction.user.id).cnt + 1;
 
@@ -421,7 +431,7 @@ client.on('interactionCreate', async (interaction) => {
             { name: '👤 Imię i Nazwisko', value: fullName, inline: false },
             { name: '🎂 Data Urodzenia i Wiek', value: birth, inline: true },
             { name: '🌍 Obywatelstwo', value: citizen, inline: true },
-            { name: '🎮 Konto Roblox', value: userData.robloxUsername, inline: false }
+            { name: '🎮 Konto Roblox', value: `[${userData.robloxUsername}](https://www.roblox.com/users/${userData.robloxId}/profile)`, inline: false }
           )
           .setFooter({ text: `Postać ${count}/2 | Właściciel: ${interaction.user.tag}` })
           .setTimestamp();
@@ -429,7 +439,7 @@ client.on('interactionCreate', async (interaction) => {
         const targetCh = await client.channels.fetch(CH_DOWODY);
         await targetCh.send({ embeds: [embed] });
 
-        return interaction.reply({ content: `✅ Dowód tożsamości został pomyślnie wyrobiony (Postać ${count}/2)!`, ephemeral: true });
+        return interaction.editReply({ content: `✅ Dowód tożsamości został pomyślnie wyrobiony (Postać ${count}/2)!` });
       }
 
       if (interaction.customId === 'modal_car') {
@@ -455,13 +465,13 @@ client.on('interactionCreate', async (interaction) => {
         const targetCh = await client.channels.fetch(CH_POJAZDY);
         await targetCh.send({ embeds: [embed] });
 
-        return interaction.reply({ content: '✅ Pojazd został pomyślnie zarejestrowany!', ephemeral: true });
+        return interaction.editReply({ content: '✅ Pojazd został pomyślnie zarejestrowany!' });
       }
     }
   } catch (err) {
     console.error('Błąd podczas obsługi interakcji:', err);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: '❌ Wystąpił błąd podczas przetwarzania żądania.', ephemeral: true }).catch(() => {});
+    if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply({ content: '❌ Wystąpił błąd podczas przetwarzania żądania.' }).catch(() => {});
     }
   }
 });
