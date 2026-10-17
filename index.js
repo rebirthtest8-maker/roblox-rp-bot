@@ -13,7 +13,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const DB_PATH = process.env.DB_PATH || './data/bot.db';
 
-// Konfiguracja ID serwera
+// Konfiguracja ról i kanałów z Twojego serwera
 const VERIFY_ROLES = [
   '1560936992915853443', '1560924079060684932', '1560924892432695296', 
   '1560925102638374963', '1560927670643068979'
@@ -24,12 +24,7 @@ const CH_POJAZDY = '1560931141182292048';
 const ROLE_RP = '1560927722711158835';
 const CH_RP = '1560928873280176238';
 
-function generateNumericCode() {
-  const num = Math.floor(100000 + Math.random() * 900000);
-  return `RP-${num}`;
-}
-
-// Baza danych SQLite zoptymalizowana pod Railway Volume
+// Konfiguracja SQLite zoptymalizowana pod Railway Volume
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 const db = new Database(DB_PATH);
@@ -39,8 +34,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     discordId TEXT PRIMARY KEY,
     robloxId TEXT,
+    robloxUsername TEXT
+  );
+  CREATE TABLE IF NOT EXISTS captcha_sessions (
+    discordId TEXT PRIMARY KEY,
+    robloxId TEXT,
     robloxUsername TEXT,
-    verifyCode TEXT
+    answer TEXT
   );
   CREATE TABLE IF NOT EXISTS ids (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +73,7 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// Pętla sprawdzająca czas rozpoczęcia RP i pingująca @everyone
+// Pętla sprawdzająca czas rozpoczęcia RP (pinguje @everyone w wyznaczonym czasie)
 setInterval(async () => {
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -86,7 +86,7 @@ setInterval(async () => {
         const embed = new EmbedBuilder()
           .setColor(0x2ECC71)
           .setTitle('🚨 ROZPOCZĘCIE ROLEPLAY')
-          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy wszystkich do gry!`)
+          .setDescription(`Wydarzenie RolePlay zaplanowane przez **${rp.plannerName}** właśnie się **rozpoczęło**! Zapraszamy do gry!`)
           .setTimestamp();
         await channel.send({ content: '@everyone', embeds: [embed] }).catch(() => {});
       }
@@ -117,7 +117,7 @@ client.once('ready', async () => {
     await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
     console.log('✅ Zarejestrowano komendy slash!');
   } catch (err) {
-    console.error('Błąd rejestracji komend slash:', err);
+    console.error('Błąd rejestracji komend:', err);
   }
 });
 
@@ -145,7 +145,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const targetCh = await client.channels.fetch(CH_PANEL);
         await targetCh.send({ embeds: [embed], components: [row] });
-        return interaction.editReply({ content: '✅ Panel został wysłany na wyznaczony kanał!' });
+        return interaction.editReply({ content: '✅ Panel został wysłany na kanał!' });
       }
 
       if (interaction.commandName === 'zaplanuj-rp') {
@@ -197,7 +197,6 @@ client.on('interactionCreate', async (interaction) => {
 
     // ==================== OBSŁUGA PRZYCISKÓW ====================
     if (interaction.isButton()) {
-      // Modale NIE MOGĄ mieć deferReply!
       if (interaction.customId === 'btn_verify') {
         const modal = new ModalBuilder().setCustomId('modal_verify').setTitle('Weryfikacja Konta Roblox');
         const robloxInput = new TextInputBuilder()
@@ -235,70 +234,23 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
       }
 
-      // Sprawdzanie kodu weryfikacyjnego
-      if (interaction.customId === 'verify_check') {
-        await interaction.deferReply({ ephemeral: true });
+      if (interaction.customId === 'open_captcha_modal') {
+        const session = db.prepare('SELECT * FROM captcha_sessions WHERE discordId = ?').get(interaction.user.id);
+        if (!session) return interaction.reply({ content: '❌ Sesja wygasła. Rozpocznij weryfikację ponownie.', ephemeral: true });
 
-        const userData = db.prepare('SELECT * FROM users WHERE discordId = ?').get(interaction.user.id);
-        if (!userData) {
-          return interaction.editReply({ content: '❌ Nie rozpoczęto procesu weryfikacji. Wpisz swój nick ponownie w panelu.' });
-        }
-
-        const targetCode = userData.verifyCode;
-        const targetClean = targetCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        let fetchedDescription = '';
-        let verified = false;
-
-        // 1. Sprawdzanie przez Bloxlink API (globalna baza graczy Roblox na Discordzie)
-        try {
-          const blRes = await fetch(`https://api.blox.link/v4/public/guilds/${GUILD_ID}/discord-to-roblox/${interaction.user.id}`, { timeout: 3000 });
-          if (blRes.ok) {
-            const blData = await blRes.json();
-            if (blData.robloxID && String(blData.robloxID) === String(userData.robloxId)) {
-              verified = true;
-            }
-          }
-        } catch (e) {}
-
-        // 2. Jeśli brak w Bloxlink — sprawdzanie przez RoProxy z ominięciem blokad Cloudflare
-        if (!verified) {
-          try {
-            const proxyRes = await fetch(`https://users.roproxy.com/v1/users/${userData.robloxId}?_=${Date.now()}`, {
-              headers: { 'Cache-Control': 'no-cache' },
-              timeout: 4000
-            });
-            if (proxyRes.ok) {
-              const data = await proxyRes.json();
-              fetchedDescription = data.description || '';
-            }
-          } catch (e) {}
-
-          const cleanDesc = fetchedDescription.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-          if (cleanDesc.includes(targetClean)) {
-            verified = true;
-          }
-        }
-
-        if (verified) {
-          const member = await interaction.guild.members.fetch(interaction.user.id);
-          await member.roles.add(VERIFY_ROLES).catch(err => {
-            console.error('Błąd nadawania ról (upewnij się, że rola bota jest wyżej na liście serwera!):', err);
-          });
-
-          return interaction.editReply({ 
-            content: `✅ **SUKCES! Konto [${userData.robloxUsername}](https://www.roblox.com/users/${userData.robloxId}/profile) zostało pomyślnie zweryfikowane!**\nNadano wszystkie 5 ról obywatela.` 
-          });
-        } else {
-          return interaction.editReply({ 
-            content: `❌ **Kod nie został jeszcze wykryty w sekcji About (O mnie).**\n\nTwój kod to:\n\`\`\`${targetCode}\`\`\`\n🔗 **Link do Twojego profilu:** https://www.roblox.com/users/${userData.robloxId}/profile\n\n**Odczytany opis z profilu:**\n> \`${fetchedDescription || '(pole jest puste lub serwery Roblox jeszcze się nie zaktualizowały)'}\`\n\n🛠️ **Wskazówki:**\n1. Otwórz powyższy link i upewnij się, że jesteś zalogowany na to konto.\n2. Wklej kod w sekcji **About (O mnie)** i wciśnij **Save**.\n3. Jeśli Roblox zamienił kod na \`###\`, wpisz go ze spacją między każdym znakiem: **\`${targetCode.split('').join(' ')}\`** (bot bez problemu go rozpozna).\n4. Odczekaj 10 sekund i kliknij przycisk ponownie.` 
-          });
-        }
+        const modal = new ModalBuilder().setCustomId('modal_captcha').setTitle('Rozwiąż Captchę');
+        const answerInput = new TextInputBuilder()
+          .setCustomId('captcha_answer')
+          .setLabel('Wpisz wynik podanego działania')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        modal.addComponents(new ActionRowBuilder().addComponents(answerInput));
+        return interaction.showModal(modal);
       }
 
       if (interaction.customId.startsWith('rp_confirm_')) {
         await interaction.deferUpdate();
         const [, , kto, epoch, dataStr, godzina] = interaction.customId.split('_');
-        
         db.prepare('INSERT INTO scheduled_rp (plannerName, dateTimeEpoch, dateStr, timeStr) VALUES (?, ?, ?, ?)').run(kto, epoch, dataStr, godzina);
 
         const rpChannel = await client.channels.fetch(CH_RP);
@@ -360,47 +312,78 @@ client.on('interactionCreate', async (interaction) => {
 
     // ==================== OBSŁUGA FORMULARZY (MODALI) ====================
     if (interaction.isModalSubmit()) {
-      // Wszystkie modale natychmiast odraczamy, aby zapobiec timeoutom
       await interaction.deferReply({ ephemeral: true });
 
+      // Krok 1: Wpisanie nicku Roblox -> Generowanie Captchy
       if (interaction.customId === 'modal_verify') {
         const inputNick = interaction.fields.getTextInputValue('roblox_nick').trim();
         
-        const searchRes = await fetch('https://users.roblox.com/v1/usernames/users', {
+        let searchRes = await fetch('https://users.roblox.com/v1/usernames/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ usernames: [inputNick], excludeBannedUsers: true })
-        });
-        const searchJson = await searchRes.json();
+        }).catch(() => null);
 
-        if (!searchJson.data || searchJson.data.length === 0) {
-          return interaction.editReply({ content: '❌ Nie odnaleziono gracza o takim nicku na Roblox!' });
+        let searchJson = searchRes ? await searchRes.json() : null;
+
+        if (!searchJson || !searchJson.data || searchJson.data.length === 0) {
+          return interaction.editReply({ content: '❌ Nie odnaleziono konta o takim nicku na Roblox! Sprawdź pisownię i spróbuj ponownie.' });
         }
 
         const robloxId = searchJson.data[0].id;
         const robloxUsername = searchJson.data[0].name;
-        const verifyCode = generateNumericCode();
+
+        // Prosta losowa captchya matematyczna
+        const num1 = Math.floor(Math.random() * 10) + 1;
+        const num2 = Math.floor(Math.random() * 10) + 1;
+        const answer = String(num1 + num2);
 
         db.prepare(`
-          INSERT INTO users (discordId, robloxId, robloxUsername, verifyCode) 
+          INSERT INTO captcha_sessions (discordId, robloxId, robloxUsername, answer)
           VALUES (?, ?, ?, ?)
-          ON CONFLICT(discordId) DO UPDATE SET robloxId = ?, robloxUsername = ?, verifyCode = ?
-        `).run(interaction.user.id, robloxId, robloxUsername, verifyCode, robloxId, robloxUsername, verifyCode);
-
-        const profileUrl = `https://www.roblox.com/users/${robloxId}/profile`;
+          ON CONFLICT(discordId) DO UPDATE SET robloxId = ?, robloxUsername = ?, answer = ?
+        `).run(interaction.user.id, robloxId, robloxUsername, answer, robloxId, robloxUsername, answer);
 
         const embed = new EmbedBuilder()
           .setColor(0xF1C40F)
-          .setTitle('🔐 Krok 2: Weryfikacja konta Roblox')
-          .setDescription(`Witaj **${robloxUsername}**!\n\n1. Kliknij w link do swojego profilu: **[Twój Profil Roblox](${profileUrl})**\n2. Wklej poniższy kod w polu **About (O mnie)** i zapisz zmiany:\n\n\`\`\`${verifyCode}\`\`\`\n*(W razie cenzury wpisz kod ze spacjami: \`${verifyCode.split('').join(' ')}\`)*\n\n3. Odczekaj około 10 sekund i kliknij poniższy przycisk:`);
+          .setTitle('🧩 Weryfikacja Captcha')
+          .setDescription(`Witaj **${robloxUsername}**!\n\nAby potwierdzić tożsamość, oblicz poniższe działanie:\n\n### Ile to jest: \`${num1} + ${num2}\` ?\n\nKliknij przycisk poniżej, aby wpisać wynik:`);
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('verify_check').setLabel('Sprawdź profil').setStyle(ButtonStyle.Success)
+          new ButtonBuilder().setCustomId('open_captcha_modal').setLabel('Wpisz wynik Captcha').setStyle(ButtonStyle.Success).setEmoji('🔢')
         );
 
         return interaction.editReply({ embeds: [embed], components: [row] });
       }
 
+      // Krok 2: Sprawdzenie przepisanego kodu Captcha i nadanie ról
+      if (interaction.customId === 'modal_captcha') {
+        const userAnswer = interaction.fields.getTextInputValue('captcha_answer').trim();
+
+        const session = db.prepare('SELECT * FROM captcha_sessions WHERE discordId = ?').get(interaction.user.id);
+        if (!session) return interaction.editReply({ content: '❌ Sesja wygasła. Rozpocznij weryfikację od nowa.' });
+
+        if (userAnswer === session.answer) {
+          db.prepare(`
+            INSERT INTO users (discordId, robloxId, robloxUsername)
+            VALUES (?, ?, ?)
+            ON CONFLICT(discordId) DO UPDATE SET robloxId = ?, robloxUsername = ?
+          `).run(interaction.user.id, session.robloxId, session.robloxUsername, session.robloxId, session.robloxUsername);
+
+          db.prepare('DELETE FROM captcha_sessions WHERE discordId = ?').run(interaction.user.id);
+
+          const member = await interaction.guild.members.fetch(interaction.user.id);
+          await member.roles.add(VERIFY_ROLES).catch(err => {
+            console.error('Błąd nadawania ról (upewnij się, że rola bota jest wyżej w hierarchii serwera niż nadawane role!):', err);
+          });
+
+          return interaction.editReply({ content: `✅ **Weryfikacja zakończona sukcesem!** Połączono z kontem **${session.robloxUsername}** i nadano wszystkie role obywatela.` });
+        } else {
+          return interaction.editReply({ content: '❌ **Błędny wynik Captcha!** Spróbuj ponownie, klikając przycisk "Zweryfikuj Roblox" w panelu głównym.' });
+        }
+      }
+
+      // Wyrabianie dowodu osobistego (max 2)
       if (interaction.customId === 'modal_id') {
         const fullName = interaction.fields.getTextInputValue('fullname');
         const birth = interaction.fields.getTextInputValue('birth');
@@ -442,6 +425,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.editReply({ content: `✅ Dowód tożsamości został pomyślnie wyrobiony (Postać ${count}/2)!` });
       }
 
+      // Rejestracja pojazdu
       if (interaction.customId === 'modal_car') {
         const brand = interaction.fields.getTextInputValue('brand');
         const owner = interaction.fields.getTextInputValue('owner');
