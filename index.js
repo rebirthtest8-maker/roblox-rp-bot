@@ -13,7 +13,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const DB_PATH = process.env.DB_PATH || './data/bot.db';
 
-// Konfiguracja ID
+// Konfiguracja ID serwera
 const VERIFY_ROLES = [
   '1560936992915853443', '1560924079060684932', '1560924892432695296', 
   '1560925102638374963', '1560927670643068979'
@@ -24,7 +24,7 @@ const CH_POJAZDY = '1560931141182292048';
 const ROLE_RP = '1560927722711158835';
 const CH_RP = '1560928873280176238';
 
-// SQLite Setup z optymalizacją WAL i wsparciem dla wolumenu
+// Konfiguracja bazy danych SQLite zoptymalizowanej pod Railway Volumes
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 const db = new Database(DB_PATH);
@@ -63,12 +63,16 @@ db.exec(`
   );
 `);
 
+// Bezpieczne intencje — nie obciążają bota i eliminują błędy autoryzacji
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-  partials: [Partials.Channel, Partials.Message]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ],
+  partials: [Partials.Channel]
 });
 
-// Pętla sprawdzająca czas RP (odliczanie i start z pingiem @everyone)
+// Pętla sprawdzająca czas RP (start i ping @everyone)
 setInterval(async () => {
   const now = Math.floor(Date.now() / 1000);
   const pendingRps = db.prepare('SELECT * FROM scheduled_rp WHERE status = "active" AND dateTimeEpoch <= ?').all(now);
@@ -81,7 +85,7 @@ setInterval(async () => {
         const embed = new EmbedBuilder()
           .setColor(0x2ECC71)
           .setTitle('🚨 ROZPOCZĘCIE ROLEPLAY')
-          .setDescription(`Zaplanowane przez **${rp.plannerName}** wydarzenie RolePlay właśnie się **rozpoczęło**! Zapraszamy na serwer!`)
+          .setDescription(`Zaplanowane przez **${rp.plannerName}** wydarzenie RolePlay właśnie się **rozpoczęło**! Zapraszamy do gry!`)
           .setTimestamp();
         await channel.send({ content: '@everyone', embeds: [embed] });
       }
@@ -92,16 +96,16 @@ setInterval(async () => {
 }, 15000);
 
 client.once('ready', async () => {
-  console.log(`🤖 Bot zalogowany jako ${client.user.tag}`);
+  console.log(`🤖 Bot zalogowany pomyślnie jako: ${client.user.tag}`);
   
   const commands = [
-    { name: 'setup', description: 'Wysyła główny panel weryfikacji, dowodów i pojazdów (Admin)' },
+    { name: 'setup', description: 'Wysyła panel weryfikacji, dowodów i rejestracji pojazdów (Admin)' },
     {
       name: 'zaplanuj-rp',
       description: 'Zaplanuj nadchodzące RolePlay',
       options: [
         { name: 'kto', description: 'Kto planuje?', type: 3, required: true },
-        { name: 'godzina', description: 'Godzina w formacie GMT+2 (np. 11:21)', type: 3, required: true },
+        { name: 'godzina', description: 'Godzina GMT+2 (np. 11:21)', type: 3, required: true },
         { name: 'data', description: 'Data w formacie DD/MM/YYYY (np. 24/10/2026)', type: 3, required: true }
       ]
     }
@@ -110,7 +114,7 @@ client.once('ready', async () => {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
-    console.log('✅ Zarejestrowano komendy slash!');
+    console.log('✅ Zarejestrowano komendy slash na serwerze!');
   } catch (err) {
     console.error('Błąd rejestracji komend:', err);
   }
@@ -121,13 +125,13 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'setup') {
         if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-          return interaction.reply({ content: '❌ Brak uprawnień.', ephemeral: true });
+          return interaction.reply({ content: '❌ Ta komenda wymaga uprawnień administratora.', ephemeral: true });
         }
         
         const embed = new EmbedBuilder()
           .setColor(0xF26522)
           .setTitle('🏙️ URZĄD MIASTA — PANEL USŁUG')
-          .setDescription('Wybierz odpowiednią opcję poniżej, aby zweryfikować konto Roblox, wyrobić dokument tożsamości lub zarejestratować pojazd.');
+          .setDescription('Wybierz odpowiednią opcję poniżej, aby zweryfikować konto Roblox, wyrobić dowód tożsamości lub zarejestrować pojazd.');
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('btn_verify').setLabel('Zweryfikuj Roblox').setStyle(ButtonStyle.Success).setEmoji('🔗'),
@@ -137,12 +141,12 @@ client.on('interactionCreate', async (interaction) => {
 
         const targetCh = await client.channels.fetch(CH_PANEL);
         await targetCh.send({ embeds: [embed], components: [row] });
-        return interaction.reply({ content: '✅ Wysłano panel główny!', ephemeral: true });
+        return interaction.reply({ content: '✅ Panel główny został wysłany na wyznaczony kanał!', ephemeral: true });
       }
 
       if (interaction.commandName === 'zaplanuj-rp') {
         if (!interaction.member.roles.cache.has(ROLE_RP) && !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-          return interaction.reply({ content: '❌ Nie masz uprawnień do tej komendy!', ephemeral: true });
+          return interaction.reply({ content: '❌ Nie posiadasz rangi uprawniającej do planowania RP!', ephemeral: true });
         }
 
         const kto = interaction.options.getString('kto');
@@ -154,12 +158,12 @@ client.on('interactionCreate', async (interaction) => {
         const eventDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:00+02:00`);
 
         if (isNaN(eventDate.getTime())) {
-          return interaction.reply({ content: '❌ Błędny format daty (DD/MM/YYYY) lub godziny (GG:MM)!', ephemeral: true });
+          return interaction.reply({ content: '❌ Niepoprawny format daty (użyj DD/MM/YYYY) lub godziny (użyj GG:MM)!', ephemeral: true });
         }
 
         const epoch = Math.floor(eventDate.getTime() / 1000);
 
-        // Sprawdź, czy istnieje już aktywne RP
+        // Sprawdzanie czy istnieje już aktywne RP
         const activeRp = db.prepare('SELECT * FROM scheduled_rp WHERE status = "active"').get();
         if (activeRp) {
           const manageRow = new ActionRowBuilder().addComponents(
@@ -167,7 +171,7 @@ client.on('interactionCreate', async (interaction) => {
             new ButtonBuilder().setCustomId('rp_cancel_active').setLabel('Anuluj').setStyle(ButtonStyle.Danger)
           );
           return interaction.reply({
-            content: `⚠️ Istnieje już zaplanowane aktywne RolePlay na <t:${epoch}:F> (<t:${epoch}:R>).\nCo chcesz zrobić?`,
+            content: `⚠️ Istnieje już zaplanowane RolePlay na <t:${activeRp.dateTimeEpoch}:F> (<t:${activeRp.dateTimeEpoch}:R>).\nWybierz działanie:`,
             components: [manageRow],
             ephemeral: true
           });
@@ -176,7 +180,7 @@ client.on('interactionCreate', async (interaction) => {
         const confirmEmbed = new EmbedBuilder()
           .setColor(0xF1C40F)
           .setTitle('⚠️ Potwierdzenie planowania RP')
-          .setDescription(`Czy jesteś pewny, że poniższe informacje są zgodne?\n\n**Planuje:** ${kto}\n**Data:** ${dataStr}\n**Godzina (GMT+2):** ${godzina} (<t:${epoch}:F>)`);
+          .setDescription(`Czy na pewno wszystkie dane są poprawne?\n\n**Organizator:** ${kto}\n**Data:** ${dataStr}\n**Godzina (GMT+2):** ${godzina}\n**Rozpoczęcie:** <t:${epoch}:F> (<t:${epoch}:R>)`);
 
         const confirmRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`rp_confirm_${kto}_${epoch}_${dataStr}_${godzina}`).setLabel('Tak, potwierdzam').setStyle(ButtonStyle.Success),
@@ -189,18 +193,22 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.isButton()) {
       if (interaction.customId === 'btn_verify') {
-        const modal = new ModalBuilder().setCustomId('modal_verify').setTitle('Weryfikacja Roblox');
-        const robloxInput = new TextInputBuilder().setCustomId('roblox_nick').setLabel('Twój dokładny nick z Roblox').setStyle(TextInputStyle.Short).setRequired(true);
+        const modal = new ModalBuilder().setCustomId('modal_verify').setTitle('Weryfikacja Konta Roblox');
+        const robloxInput = new TextInputBuilder()
+          .setCustomId('roblox_nick')
+          .setLabel('Twój dokładny nick z Roblox')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
         modal.addComponents(new ActionRowBuilder().addComponents(robloxInput));
         return interaction.showModal(modal);
       }
 
       if (interaction.customId === 'btn_id') {
         const userCheck = db.prepare('SELECT robloxId FROM users WHERE discordId = ?').get(interaction.user.id);
-        if (!userCheck) return interaction.reply({ content: '❌ Musisz najpierw zweryfikować konto Roblox!', ephemeral: true });
+        if (!userCheck) return interaction.reply({ content: '❌ Musisz najpierw przejść weryfikację konta Roblox!', ephemeral: true });
 
         const count = db.prepare('SELECT COUNT(*) as cnt FROM ids WHERE discordId = ?').get(interaction.user.id).cnt;
-        if (count >= 2) return interaction.reply({ content: '❌ Możesz posiadać maksymalnie 2 dowody osobiste (Postacie 2/2)!', ephemeral: true });
+        if (count >= 2) return interaction.reply({ content: '❌ Posiadasz już maksymalną liczbę postaci (2/2)!', ephemeral: true });
 
         const modal = new ModalBuilder().setCustomId('modal_id').setTitle('Wyrób Dowód Osobisty');
         modal.addComponents(
@@ -228,21 +236,21 @@ client.on('interactionCreate', async (interaction) => {
 
         const rpChannel = await client.channels.fetch(CH_RP);
         await rpChannel.send({
-          content: `@everyone Nadchodzi nowe wydarzenie RolePlay!`,
+          content: `@everyone Nowe wydarzenie RolePlay zostało zaplanowane!`,
           embeds: [
             new EmbedBuilder()
               .setColor(0xF26522)
-              .setTitle('🗓️ Zaplanowano Nowe RolePlay')
+              .setTitle('🗓️ Zapowiedź Wydarzenia RolePlay')
               .addFields(
-                { name: 'Planujący', value: kto, inline: true },
-                { name: 'Kiedy', value: `${dataStr} o godzinie ${godzina} (<t:${epoch}:R>)`, inline: true },
+                { name: 'Organizator', value: kto, inline: true },
+                { name: 'Kiedy', value: `${dataStr} o ${godzina} (<t:${epoch}:R>)`, inline: true },
                 { name: 'Dokładny czas', value: `<t:${epoch}:F>`, inline: false }
               )
               .setTimestamp()
           ]
         });
 
-        return interaction.update({ content: '✅ Pomyślnie zaplanowano RP i wysłano ogłoszenie!', embeds: [], components: [] });
+        return interaction.update({ content: '✅ Wydarzenie RolePlay zostało ogłoszone!', embeds: [], components: [] });
       }
 
       if (interaction.customId.startsWith('rp_reschedule_')) {
@@ -252,38 +260,38 @@ client.on('interactionCreate', async (interaction) => {
 
         const rpChannel = await client.channels.fetch(CH_RP);
         await rpChannel.send({
-          content: `@everyone Uwaga! Zaplanowane RolePlay zostało **przełożone**!`,
+          content: `@everyone Uwaga! Nadchodzące RolePlay zostało **przełożone**!`,
           embeds: [
             new EmbedBuilder()
               .setColor(0x3498DB)
-              .setTitle('📅 Zaktualizowany Termin RolePlay')
+              .setTitle('📅 Zmiana Terminu RolePlay')
               .addFields(
-                { name: 'Nowy termin', value: `${dataStr} o godzinie ${godzina} (<t:${epoch}:R>)`, inline: false }
+                { name: 'Nowy termin', value: `${dataStr} o ${godzina} (<t:${epoch}:R>)`, inline: false }
               )
               .setTimestamp()
           ]
         });
 
-        return interaction.update({ content: '✅ Przełożono termin RolePlay pomyślnie.', embeds: [], components: [] });
+        return interaction.update({ content: '✅ Pomyślnie zmieniono termin RolePlay.', embeds: [], components: [] });
       }
 
       if (interaction.customId === 'rp_cancel_active') {
         db.prepare('UPDATE scheduled_rp SET status = "cancelled" WHERE status = "active"').run();
         const rpChannel = await client.channels.fetch(CH_RP);
         await rpChannel.send({
-          embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('🚫 ODWOŁANIE ROLEPLAY').setDescription('Nadchodzące wydarzenie RolePlay zostało **odwołane** przez zarząd.')]
+          embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('🚫 ODWOŁANIE ROLEPLAY').setDescription('Planowane wydarzenie RolePlay zostało **odwołane**.')]
         });
-        return interaction.update({ content: '✅ Anulowano aktywne RolePlay.', embeds: [], components: [] });
+        return interaction.update({ content: '✅ Aktywne RolePlay zostało odwołane.', embeds: [], components: [] });
       }
 
       if (interaction.customId === 'rp_cancel') {
-        return interaction.update({ content: '❌ Anulowano proces planowania.', embeds: [], components: [] });
+        return interaction.update({ content: '❌ Anulowano procedurę planowania.', embeds: [], components: [] });
       }
 
       if (interaction.customId === 'verify_check') {
         await interaction.deferReply({ ephemeral: true });
         const userData = db.prepare('SELECT * FROM users WHERE discordId = ?').get(interaction.user.id);
-        if (!userData) return interaction.editReply({ content: '❌ Błąd sesji. Rozpocznij weryfikację ponownie.' });
+        if (!userData) return interaction.editReply({ content: '❌ Błąd sesji weryfikacyjnej. Wpisz swój nick ponownie w panelu.' });
 
         const res = await fetch(`https://users.roblox.com/v1/users/${userData.robloxId}`);
         const json = await res.json();
@@ -291,12 +299,14 @@ client.on('interactionCreate', async (interaction) => {
 
         if (userDescription.includes(userData.verifyCode)) {
           const member = await interaction.guild.members.fetch(interaction.user.id);
-          await member.roles.add(VERIFY_ROLES).catch(() => {});
-          return interaction.editReply({ content: '✅ **Pomyślnie zweryfikowano!** Nadano wszystkie role.' });
+          await member.roles.add(VERIFY_ROLES).catch((err) => {
+            console.error('Błąd nadawania ról (sprawdź pozycję roli bota):', err);
+          });
+          return interaction.editReply({ content: '✅ **Pomyślnie zweryfikowano!** Otrzymałeś wszystkie role obywatela.' });
         } else {
           const newCode = 'RP-' + Math.floor(100000 + Math.random() * 900000);
           db.prepare('UPDATE users SET verifyCode = ? WHERE discordId = ?').run(newCode, interaction.user.id);
-          return interaction.editReply({ content: `❌ Nie znaleziono kodu w Twoim opisie Roblox!\nWygenerowano nowy kod: **${newCode}**. Wklej go do opisu profilu i kliknij "Sprawdź ponowanie" ponownie.` });
+          return interaction.editReply({ content: `❌ Kod nie został odnaleziony w opisie Twojego profilu Roblox!\nWygenerowano nowy kod: **${newCode}**\nWklej go w polu **About (O mnie)** i spróbuj ponownie.` });
         }
       }
     }
@@ -313,7 +323,7 @@ client.on('interactionCreate', async (interaction) => {
         const searchJson = await searchRes.json();
 
         if (!searchJson.data || searchJson.data.length === 0) {
-          return interaction.reply({ content: '❌ Nie znaleziono gracza o takim nicku na Roblox!', ephemeral: true });
+          return interaction.reply({ content: '❌ Podany użytkownik Roblox nie istnieje!', ephemeral: true });
         }
 
         const robloxId = searchJson.data[0].id;
@@ -328,11 +338,11 @@ client.on('interactionCreate', async (interaction) => {
 
         const embed = new EmbedBuilder()
           .setColor(0xF1C40F)
-          .setTitle('🔐 Krok 2: Weryfikacja Konta Roblox')
-          .setDescription(`Witaj **${robloxUsername}**!\nAby potwierdzić tożsamość, wejdź w ustawienia profilu Roblox i wklej poniższy kod do sekcji **About (O mnie / Bio)**:\n\n\`\`\`${verifyCode}\`\`\`\nGdy zapiszesz opis na Roblox, kliknij przycisk poniżej.`);
+          .setTitle('🔐 Krok 2: Weryfikacja konta Roblox')
+          .setDescription(`Witaj **${robloxUsername}**!\nAby potwierdzić, że konto należy do Ciebie, wejdź na Roblox w edycję profilu i wklej do sekcji **About (O mnie)** kod:\n\n\`\`\`${verifyCode}\`\`\`\nPo zapisaniu zmian na Roblox kliknij poniższy przycisk:`);
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('verify_check').setLabel('Sprawdź ponownie').setStyle(ButtonStyle.Success)
+          new ButtonBuilder().setCustomId('verify_check').setLabel('Sprawdź profil').setStyle(ButtonStyle.Success)
         );
 
         return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
@@ -357,7 +367,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const embed = new EmbedBuilder()
           .setColor(0x3498DB)
-          .setTitle('🪪 Dowód Osobisty Obywatela')
+          .setTitle('🪪 Nowy Dowód Osobisty Obywatela')
           .setThumbnail(avatarUrl)
           .addFields(
             { name: '👤 Imię i Nazwisko', value: fullName, inline: false },
@@ -371,7 +381,7 @@ client.on('interactionCreate', async (interaction) => {
         const targetCh = await client.channels.fetch(CH_DOWODY);
         await targetCh.send({ embeds: [embed] });
 
-        return interaction.reply({ content: `✅ Pomyślnie wyrobiono dowód tożsamości (Postać ${count}/2)!`, ephemeral: true });
+        return interaction.reply({ content: `✅ Dowód osobisty został pomyślnie wyrobiony (Postać ${count}/2)!`, ephemeral: true });
       }
 
       if (interaction.customId === 'modal_car') {
@@ -385,25 +395,25 @@ client.on('interactionCreate', async (interaction) => {
 
         const embed = new EmbedBuilder()
           .setColor(0xE67E22)
-          .setTitle('🚗 Rejestracja Pojazdu')
+          .setTitle('🚗 Nowy Wpis: Rejestracja Pojazdu')
           .addFields(
             { name: '🏷️ Marka Pojazdu', value: brand, inline: true },
             { name: '👤 Właściciel', value: owner, inline: true },
             { name: '🔢 Numer Rejestracyjny', value: `\`${plate}\``, inline: false }
           )
-          .setFooter({ text: `Zarejestrowano przez: ${interaction.user.tag}` })
+          .setFooter({ text: `Zgłaszający: ${interaction.user.tag}` })
           .setTimestamp();
 
         const targetCh = await client.channels.fetch(CH_POJAZDY);
         await targetCh.send({ embeds: [embed] });
 
-        return interaction.reply({ content: '✅ Pojazd został pomyślnie zarejestrowany w urzędzie!', ephemeral: true });
+        return interaction.reply({ content: '✅ Pojazd został pomyślnie zarejestrowany!', ephemeral: true });
       }
     }
   } catch (err) {
     console.error('Błąd podczas obsługi interakcji:', err);
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: '❌ Wystąpił błąd krytyczny bota.', ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: '❌ Wystąpił błąd podczas przetwarzania żądania.', ephemeral: true }).catch(() => {});
     }
   }
 });
