@@ -1,7 +1,6 @@
 {
   "name": "roblox-rp-bot",
-  "version": "1.0.0",
-  "description": "Bot do weryfikacji Roblox, urzędu i zarządzania RP",
+  "version": "1.2.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
