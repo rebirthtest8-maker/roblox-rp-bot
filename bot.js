@@ -1,5 +1,5 @@
 // ============================================================
-//  BOT PODAŃ GDDKiA — uproszczona wersja (Railway + Volume)
+//  BOT PODAŃ BYDGOSZCZ RP — uproszczona wersja (Railway + Volume)
 //  Zawiera TYLKO: system podań (webhook + akceptacja/odrzucenie)
 // ============================================================
 const {
@@ -30,7 +30,7 @@ const WEBHOOK_SECRET     = process.env.WEBHOOK_SECRET;
 const PORT               = process.env.PORT || 3000;
 const DB_PATH            = process.env.DB_PATH || './data/bot.db';   // na Volume: /data/bot.db
 const LOGO_URL           = process.env.LOGO_URL || 'https://cdn.discordapp.com/attachments/1458932683676586294/1557822815028117584/removebg.png';
-const EMBED_COLOR        = 0xf26522; // GDDKiA Orange
+const EMBED_COLOR        = 0x2980b9; // Bydgoszcz RP Blue
 
 if (!TOKEN || !GUILD_ID || !APPLICATION_CHANNEL_ID || ROLE_IDS.length === 0 || !WEBHOOK_SECRET) {
   console.error('❌ BŁĄD: Brak wymaganych zmiennych w .env (DISCORD_TOKEN, GUILD_ID, APPLICATION_CHANNEL_ID, ROLE_IDS, WEBHOOK_SECRET)');
@@ -119,21 +119,23 @@ app.post('/api/submit', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setColor(EMBED_COLOR)
-      .setTitle('🛣️ NOWE PODANIE DO FAKCJI GDDKiA')
-      .setDescription('Zarząd rekrutacyjny proszony jest o analizę i podjęcie decyzji przyciskami pod wiadomością.')
+      .setTitle('🛡️ NOWE PODANIE DO ADMINISTRACJI BYDGOSZCZ RP')
+      .setDescription('Wyższa administracja proszona jest o analizę i podjęcie decyzji przyciskami pod wiadomością.')
       .setThumbnail(LOGO_URL)
       .addFields(
-        { name: '👤 Dane Główne (IC & OOC)', value: `>>> **Imię i Nazwisko:** \`${answers.q1 || 'Brak'}\`\n**Wiek:** \`${answers.q2 || 'Brak'}\`\n**Nick Discord:** \`${answers.q3 || 'Brak'}\``, inline: false },
-        { name: '⏰ Czas i Doświadczenie', value: `>>> **Godziny dziennie:** \`${answers.q4 || 'Brak'}\`\n**Poprzednia frakcja:** \`${answers.q5 || 'Brak'}\``, inline: false },
-        { name: '❓ Dlaczego GDDKiA?', value: t(answers.q6) },
-        { name: '📚 Co wiesz o GDDKiA?', value: t(answers.q7) },
-        { name: '💪 Mocne strony / Dlaczego Ty?', value: t(answers.q8) },
-        { name: '🎭 Sytuacja: zachowanie wobec obywatela', value: t(answers.q10) },
-        { name: '🛠️ Sytuacja: uszkodzona droga i zabezpieczenie', value: t(answers.q11) },
-        { name: '📋 Dodatkowe informacje', value: t(answers.q14) },
-        { name: '⚖️ Znajomość regulaminów', value: `> **Znajomość:** ${answers.q19 || 'Brak'}\n> **Zobowiązanie do przestrzegania:** ${answers.q20 || 'Brak'}`, inline: false }
+        { name: '👤 Dane Główne (IC & OOC)', value: `>>> **Imię i Nazwisko:** \`${answers.q1 || 'Brak'}\`\n**Wiek:** \`${answers.q2 || 'Brak'}\`\n**Nick Discord:** \`${answers.q3 || 'Brak'}\`\n**ID Discord:** \`${req.body.discordId || 'Brak'}\``, inline: false },
+        { name: '⏰ Aktywność i Doświadczenie', value: `>>> **Godziny dziennie:** \`${answers.q4 || 'Brak'}\`\n**Doświadczenie w administracji:** \`${answers.q5 || 'Brak'}\``, inline: false },
+        { name: '❓ Dlaczego administracja Bydgoszcz RP?', value: t(answers.q6) },
+        { name: '📚 Znajomość zasad i zadań administracji', value: t(answers.q7) },
+        { name: '💪 Mocne strony / Dlaczego Ty?', value: `>>> **Mocne strony:**\n${t(answers.q8)}\n**Dlaczego Ty:**\n${t(answers.q9)}` },
+        { name: '🎮 Scenariusz: gracz łamie regulamin', value: t(answers.q10) },
+        { name: '🎮 Scenariusz: konflikt o RDM', value: t(answers.q11) },
+        { name: '🎮 Scenariusz: znajomy łamie regulamin', value: t(answers.q12) },
+        { name: '📋 Postępowanie z podejrzeniem cheatów', value: t(answers.q13) },
+        { name: '👆 Reakcja na polecenia wyższej rangi', value: t(answers.q14) },
+        { name: '⚖️ Regulamin', value: `> **Znajomość regulaminu:** ${answers.q19 || 'Brak'}\n> **Zobowiązanie do przestrzegania:** ${answers.q20 || 'Brak'}`, inline: false }
       )
-      .setFooter({ text: `Kandydat: ${answers.q3 || 'Nieznany'} • ID podania: ${appId}` })
+      .setFooter({ text: `Kandydat: ${answers.q3 || 'Nieznany'} • Bydgoszcz RP • ID podania: ${appId}` })
       .setTimestamp(timestamp ? new Date(timestamp) : new Date());
 
     const row = new ActionRowBuilder().addComponents(
@@ -187,7 +189,7 @@ client.on('interactionCreate', async (interaction) => {
     // Oznaczenie embeda
     const updated = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(isAccept ? 0x2ecc71 : 0xdc3545)
-      .setTitle(isAccept ? '🛣️ PODANIE ZAAKCEPTOWANE' : '🛣️ PODANIE ODRZUCONE')
+      .setTitle(isAccept ? '🛡️ PODANIE ZAAKCEPTOWANE' : '🛡️ PODANIE ODRZUCONE')
       .setFooter({ text: `Rozpatrzone przez: ${interaction.user.tag} • ID: ${appId}` });
     await interaction.message.edit({ embeds: [updated], components: [] });
 
@@ -200,7 +202,7 @@ client.on('interactionCreate', async (interaction) => {
         embeds: [new EmbedBuilder()
           .setColor(0x2ecc71)
           .setTitle('✅ PODANIE ZAAKCEPTOWANE!')
-          .setDescription(`Gratulacje! Twoje podanie do GDDKiA zostało zaakceptowane przez ${interaction.user.tag}.\nZgłoś się na serwerze po dalsze instrukcje.`)]
+          .setDescription(`Gratulacje! Twoje podanie do administracji Bydgoszcz RP zostało zaakceptowane przez ${interaction.user.tag}.\nZgłoś się na serwerze po dalsze instrukcje.`)]
       }).catch(() => {});
       return interaction.reply({ content: `✅ Kandydat ${member.user.tag} przyjęty.`, ephemeral: true });
     } else {
@@ -224,7 +226,7 @@ client.on('interactionCreate', async (interaction) => {
           embeds: [new EmbedBuilder()
             .setColor(0xdc3545)
             .setTitle('❌ PODANIE ODRZUCONE')
-            .setDescription('Dziękujemy za poświęcony czas. Twoja aplikacja do frakcji GDDKiA została odrzucona.')]
+            .setDescription('Dziękujemy za poświęcony czas. Twoje podanie do administracji Bydgoszcz RP zostało odrzucone.')]
         }).catch(() => {});
       }
       return interaction.reply({ content: '❌ Podanie odrzucone.', ephemeral: true });
