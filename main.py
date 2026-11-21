@@ -122,9 +122,18 @@ async def warn(interaction: discord.Interaction, osoba: discord.Member):
 
 # --- KOMENDA /FAKTURA ---
 @bot.tree.command(name="faktura", description="Wystaw fakturę")
-async def faktura(interaction: discord.Interaction, komu: discord.Member, kwota: int, usluga: str):
-    if interaction.guild.get_role(ID_ROLA_FAKTURA) not in interaction.user.roles:
-        return await interaction.response.send_message("❌ Brak uprawnień.", ephemeral=True)
+# W komendzie /faktura:
+async def faktura(interaction, komu: discord.Member, kwota: int, usluga: str):
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+    cur = conn.cursor()
+    # Odejmij od płacącego
+    cur.execute("INSERT INTO economy (user_id, wallet) VALUES (%s, 0) ON CONFLICT DO NOTHING", (komu.id,))
+    cur.execute("UPDATE economy SET wallet = wallet - %s WHERE user_id = %s", (kwota, komu.id))
+    # Dodaj wystawiającemu
+    cur.execute("INSERT INTO economy (user_id, wallet) VALUES (%s, 0) ON CONFLICT DO NOTHING", (interaction.user.id,))
+    cur.execute("UPDATE economy SET wallet = wallet + %s WHERE user_id = %s", (kwota, interaction.user.id))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Faktura na {kwota} ZŁ opłacona.")
     
     # Przelew w bazie ekonomii
     conn = get_db_conn(); cur = conn.cursor()
