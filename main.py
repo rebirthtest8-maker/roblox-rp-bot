@@ -84,7 +84,7 @@ def format_seconds(secs):
     minutes, seconds = divmod(remainder, 60)
     return f"{hours}h {minutes}m {seconds}s"
 
-# SYSTEM PRACY
+# --- SYSTEM WIDOKÓW DLA REJESTRATORA PRACY ---
 class WorkSelectView(discord.ui.View):
     def __init__(self, user: discord.Member, roles_to_show: list):
         super().__init__(timeout=120)
