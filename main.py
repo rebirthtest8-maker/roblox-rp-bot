@@ -225,6 +225,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
         init_db()
+        await self.tree.sync()
         self.weekly_work_report.start()
 
     @tasks.loop(minutes=1)
@@ -254,7 +255,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# --- KOMENDA !SYNC (WYMUSZA AKTUALIZACJĘ SLASCH COMMANDS W DISCORDZIE) ---
+# --- KOMENDA !SYNC (MANUALNA SYNCHRONIZACJA KOMEND) ---
 @bot.command()
 @commands.is_owner()
 async def sync(ctx):
@@ -271,6 +272,8 @@ async def rp(interaction: discord.Interaction, akcja: str):
     if interaction.guild.get_role(ID_ROLA_RP) not in interaction.user.roles:
         return await interaction.response.send_message("❌ Nie masz uprawnień.", ephemeral=True)
 
+    await interaction.response.defer(ephemeral=True)
+
     conn = get_db_conn(); cur = conn.cursor()
     cur.execute("SELECT active FROM rp_state WHERE id = 1")
     is_active = cur.fetchone()[0]
@@ -278,7 +281,7 @@ async def rp(interaction: discord.Interaction, akcja: str):
     if akcja == "start":
         if is_active:
             cur.close(); conn.close()
-            return await interaction.response.send_message("❌ Sesja RP już trwa!", ephemeral=True)
+            return await interaction.followup.send("❌ Sesja RP już trwa!")
         cur.execute("UPDATE rp_state SET active = TRUE WHERE id = 1")
         embed = discord.Embed(title="🎭 START ROLEPLAY", description="Sesja RP rozpoczęta!", color=discord.Color.green())
         embed.set_image(url=GIF_START_RP)
@@ -286,14 +289,14 @@ async def rp(interaction: discord.Interaction, akcja: str):
     else:
         if not is_active:
             cur.close(); conn.close()
-            return await interaction.response.send_message("❌ Brak aktywnej sesji.", ephemeral=True)
+            return await interaction.followup.send("❌ Brak aktywnej sesji.")
         cur.execute("UPDATE rp_state SET active = FALSE WHERE id = 1")
         embed = discord.Embed(title="🛑 KONIEC ROLEPLAY", description="Sesja RP zakończona.", color=discord.Color.red())
         embed.set_image(url=GIF_END_RP)
         await interaction.guild.get_channel(ID_KANAL_RP).send(embed=embed)
 
     conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"✅ Wykonano: {akcja}", ephemeral=True)
+    await interaction.followup.send(f"✅ Wykonano: {akcja}")
 
 # --- KOMENDA /TRY ---
 @bot.tree.command(name="try", description="Wykonaj akcję losową /try")
@@ -418,7 +421,7 @@ async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: 
         if curr_secs < secs:
             cur.close(); conn.close()
             return await interaction.response.send_message("❌ Nie można odjąć czasu na wartość ujemną!", ephemeral=True)
-        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (secs, java.id, managed_role))
+        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (secs, osoba.id, managed_role))
         msg = f"✅ Odjęto {czas_minuty} minut(y) z czasu {osoba.mention} we frakcji {managed_name}."
 
     conn.commit(); cur.close(); conn.close()
@@ -453,12 +456,6 @@ async def sprawdz(interaction: discord.Interaction, osoba: discord.Member):
 @bot.event
 async def on_ready():
     await bot.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name="Gram na Vesper RP"))
-    # Automatyczna próba rejestracji komend po uruchomieniu bota
-    try:
-        await bot.tree.sync()
-        print("✅ Komendy ukośnika zsynchronizowane poprawnie!")
-    except Exception as e:
-        print(f"⚠️ Nie udało się automatycznie zsynchronizować komend: {e}")
     print(f"✅ Bot Synek online as {bot.user}")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
