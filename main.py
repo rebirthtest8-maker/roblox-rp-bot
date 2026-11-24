@@ -225,7 +225,6 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
         init_db()
-        await self.tree.sync()
         self.weekly_work_report.start()
 
     @tasks.loop(minutes=1)
@@ -254,6 +253,13 @@ class MyBot(commands.Bot):
             await channel.send(embed=embed)
 
 bot = MyBot()
+
+# --- KOMENDA !SYNC (WYMUSZA AKTUALIZACJĘ SLASCH COMMANDS W DISCORDZIE) ---
+@bot.command()
+@commands.is_owner()
+async def sync(ctx):
+    await bot.tree.sync()
+    await ctx.send("✅ Zsynchronizowano komendy ukośnika globally!")
 
 # --- KOMENDA /RP (START/END) ---
 @bot.tree.command(name="rp", description="Zarządzaj sesją Roleplay")
@@ -373,13 +379,12 @@ async def pracuj(interaction: discord.Interaction):
             await interaction.response.send_message("Wybierz pracę:", view=view, ephemeral=True)
 
 # --- KOMENDA /ZARZĄDZAJ-CZASEM ---
-@bot.tree.command(name="zarządzaj-czasem", description="Zarządzaj czasem swoich pracowników")
+@bot.tree.command(name="zarzadzaj-czasem", description="Zarządzaj czasem swoich pracowników")
 @app_commands.choices(akcja=[
     app_commands.Choice(name="Dodaj czas", value="add"),
     app_commands.Choice(name="Odejmij Czas", value="sub")
 ])
 async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: discord.Member, czas_minuty: int):
-    # Identyfikacja frakcji na podstawie ról zarządu
     faction_to_manage = []
     for m_role, (f_role, f_name) in MANAGEMENT_MAP.items():
         if interaction.guild.get_role(m_role) in interaction.user.roles:
@@ -388,7 +393,6 @@ async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: 
     if not faction_to_manage:
         return await interaction.response.send_message("❌ Nie masz rangi zarządu, aby zarządzać czasem.", ephemeral=True)
 
-    # Wybór odpowiedniej frakcji, jeśli pracownik ma do niej uprawnienia
     managed_role = None
     managed_name = None
     for f_role, f_name in faction_to_manage:
@@ -414,7 +418,7 @@ async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: 
         if curr_secs < secs:
             cur.close(); conn.close()
             return await interaction.response.send_message("❌ Nie można odjąć czasu na wartość ujemną!", ephemeral=True)
-        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (secs, osoba.id, managed_role))
+        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (secs, java.id, managed_role))
         msg = f"✅ Odjęto {czas_minuty} minut(y) z czasu {osoba.mention} we frakcji {managed_name}."
 
     conn.commit(); cur.close(); conn.close()
@@ -445,5 +449,16 @@ async def sprawdz(interaction: discord.Interaction, osoba: discord.Member):
         return await interaction.response.send_message("❌ Ta osoba nie jest przypisana do żadnej frakcji.", ephemeral=True)
 
     await interaction.response.send_message(embed=embed)
+
+@bot.event
+async def on_ready():
+    await bot.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name="Gram na Vesper RP"))
+    # Automatyczna próba rejestracji komend po uruchomieniu bota
+    try:
+        await bot.tree.sync()
+        print("✅ Komendy ukośnika zsynchronizowane poprawnie!")
+    except Exception as e:
+        print(f"⚠️ Nie udało się automatycznie zsynchronizować komend: {e}")
+    print(f"✅ Bot Synek online as {bot.user}")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
