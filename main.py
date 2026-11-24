@@ -108,6 +108,22 @@ class WorkPanelView(discord.ui.View):
         self.user = user
         self.faction_id = faction_id
 
+    def update_buttons(self, shift_row):
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                if child.label == "Zacznij Pracę":
+                    if shift_row:
+                        child.disabled = not shift_row[4]  # Włączony tylko podczas przerwy (aby wznowić)
+                    else:
+                        child.disabled = False  # Włączony, aby zacząć
+                elif child.label == "Przerwa w pracy":
+                    if shift_row:
+                        child.disabled = shift_row[4]  # Włączony tylko, gdy aktywny (nie na przerwie)
+                    else:
+                        child.disabled = True  # Wyłączony, gdy nieaktywny
+                elif child.label == "Zakończ Pracę":
+                    child.disabled = shift_row is None
+
     def get_embed(self):
         conn = get_db_conn(); cur = conn.cursor()
         cur.execute("SELECT * FROM active_shifts WHERE user_id = %s AND faction_id = %s", (self.user.id, self.faction_id))
@@ -123,6 +139,8 @@ class WorkPanelView(discord.ui.View):
                 status_text = "🟡 Przerwa"
             else:
                 status_text = "🟢 Służba aktywna"
+
+        self.update_buttons(shift_row)
 
         shifts_count = stats_row[1] if stats_row else 0
         total_time_sec = stats_row[0] if stats_row else 0
