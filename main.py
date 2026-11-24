@@ -110,7 +110,7 @@ class WorkPanelView(discord.ui.View):
 
     def get_embed(self):
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s", (self.user.id,))
+        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s AND faction_id = %s", (self.user.id, self.faction_id))
         shift_row = cur.fetchone()
         
         cur.execute("SELECT total_seconds, shifts_count FROM work_stats WHERE user_id = %s AND faction_id = %s", (self.user.id, self.faction_id))
@@ -141,66 +141,69 @@ class WorkPanelView(discord.ui.View):
     @discord.ui.button(label="Zacznij Pracę", style=discord.ButtonStyle.success)
     async def start_work(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s", (interaction.user.id,))
+        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s AND faction_id = %s", (interaction.user.id, self.faction_id))
         row = cur.fetchone()
         now = datetime.now()
 
+        msg_text = ""
         if not row:
             cur.execute("INSERT INTO active_shifts (user_id, faction_id, start_time) VALUES (%s, %s, %s)",
                         (interaction.user.id, self.faction_id, now))
-            await interaction.response.send_message("🟢 Rozpocząłeś służbę!", ephemeral=True)
+            msg_text = "🟢 Rozpocząłeś służbę!"
         else:
             is_break = row[4]
             if is_break:
-                cur.execute("UPDATE active_shifts SET is_break = FALSE, start_time = %s WHERE user_id = %s", (now, interaction.user.id))
-                await interaction.response.send_message("🟢 Wznowiłeś służbę z przerwy!", ephemeral=True)
+                cur.execute("UPDATE active_shifts SET is_break = FALSE, start_time = %s WHERE user_id = %s AND faction_id = %s", (now, interaction.user.id, self.faction_id))
+                msg_text = "🟢 Wznowiłeś służbę z przerwy!"
             else:
-                await interaction.response.send_message("❌ Twoja służba jest już aktywna!", ephemeral=True)
+                msg_text = "❌ Twoja służba jest już aktywna!"
 
         conn.commit(); cur.close(); conn.close()
-        await interaction.message.edit(embed=self.get_embed(), view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        await interaction.followup.send(msg_text, ephemeral=True)
 
     @discord.ui.button(label="Przerwa w pracy", style=discord.ButtonStyle.secondary)
     async def break_work(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s", (interaction.user.id,))
+        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s AND faction_id = %s", (interaction.user.id, self.faction_id))
         row = cur.fetchone()
         now = datetime.now()
 
+        msg_text = ""
         if not row:
-            await interaction.response.send_message("❌ Nie masz rozpoczętej służby!", ephemeral=True)
+            msg_text = "❌ Nie masz rozpoczętej służby!"
         else:
             _, _, start_time, total_seconds, is_break, _ = row
             if is_break:
-                await interaction.response.send_message("❌ Jesteś już na przerwie!", ephemeral=True)
+                msg_text = "❌ Jesteś już na przerwie!"
             else:
                 elapsed = int((now - start_time).total_seconds())
                 new_total = total_seconds + elapsed
-                cur.execute("UPDATE active_shifts SET is_break = TRUE, break_start = %s, total_seconds = %s WHERE user_id = %s",
-                            (now, new_total, interaction.user.id))
-                await interaction.response.send_message("🟡 Rozpocząłeś przerwę.", ephemeral=True)
+                cur.execute("UPDATE active_shifts SET is_break = TRUE, break_start = %s, total_seconds = %s WHERE user_id = %s AND faction_id = %s",
+                            (now, new_total, interaction.user.id, self.faction_id))
+                msg_text = "🟡 Rozpocząłeś przerwę."
 
         conn.commit(); cur.close(); conn.close()
-        await interaction.message.edit(embed=self.get_embed(), view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        await interaction.followup.send(msg_text, ephemeral=True)
 
     @discord.ui.button(label="Zakończ Pracę", style=discord.ButtonStyle.danger)
     async def end_work(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s", (interaction.user.id,))
+        cur.execute("SELECT * FROM active_shifts WHERE user_id = %s AND faction_id = %s", (interaction.user.id, self.faction_id))
         row = cur.fetchone()
         now = datetime.now()
 
         if not row:
-            await interaction.response.send_message("❌ Nie masz aktywnej służby!", ephemeral=True)
-            cur.close(); conn.close()
-            return
+            conn.commit(); cur.close(); conn.close()
+            return await interaction.response.send_message("❌ Nie masz aktywnej służby!", ephemeral=True)
 
         _, faction_id, start_time, total_seconds, is_break, _ = row
         shift_secs = total_seconds
         if not is_break:
             shift_secs += int((now - start_time).total_seconds())
 
-        cur.execute("DELETE FROM active_shifts WHERE user_id = %s", (interaction.user.id,))
+        cur.execute("DELETE FROM active_shifts WHERE user_id = %s AND faction_id = %s", (interaction.user.id, self.faction_id))
         cur.execute('''INSERT INTO work_stats (user_id, faction_id, total_seconds, shifts_count)
                        VALUES (%s, %s, %s, 1)
                        ON CONFLICT (user_id, faction_id)
@@ -217,8 +220,8 @@ class WorkPanelView(discord.ui.View):
             emb.add_field(name="Czas", value=format_seconds(shift_secs), inline=False)
             await log_channel.send(embed=emb)
 
-        await interaction.response.send_message(f"✅ Służba zakończona! Przepracowano: {format_seconds(shift_secs)}", ephemeral=True)
-        await interaction.message.edit(embed=self.get_embed(), view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        await interaction.followup.send(f"✅ Służba zakończona! Przepracowano: {format_seconds(shift_secs)}", ephemeral=True)
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -387,7 +390,7 @@ async def pracuj(interaction: discord.Interaction):
     app_commands.Choice(name="Dodaj czas", value="add"),
     app_commands.Choice(name="Odejmij Czas", value="sub")
 ])
-async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: discord.Member, czas_minuty: int):
+async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: discord.Member, czas_sekundy: int):
     faction_to_manage = []
     for m_role, (f_role, f_name) in MANAGEMENT_MAP.items():
         if interaction.guild.get_role(m_role) in interaction.user.roles:
@@ -407,22 +410,20 @@ async def zarzadzaj_czasem(interaction: discord.Interaction, akcja: str, osoba: 
     if not managed_role:
         return await interaction.response.send_message("❌ Ta osoba nie należy do frakcji, którą możesz zarządzać.", ephemeral=True)
 
-    secs = czas_minuty * 60
     conn = get_db_conn(); cur = conn.cursor()
-    
     cur.execute("INSERT INTO work_stats (user_id, faction_id, total_seconds, shifts_count) VALUES (%s, %s, 0, 0) ON CONFLICT DO NOTHING", (osoba.id, managed_role))
     
     if akcja == "add":
-        cur.execute("UPDATE work_stats SET total_seconds = total_seconds + %s WHERE user_id = %s AND faction_id = %s", (secs, osoba.id, managed_role))
-        msg = f"✅ Dodano {czas_minuty} minut(y) do czasu {osoba.mention} we frakcji {managed_name}."
+        cur.execute("UPDATE work_stats SET total_seconds = total_seconds + %s WHERE user_id = %s AND faction_id = %s", (czas_sekundy, osoba.id, managed_role))
+        msg = f"✅ Dodano {czas_sekundy} sekund(y) do czasu {osoba.mention} we frakcji {managed_name}."
     else:
         cur.execute("SELECT total_seconds FROM work_stats WHERE user_id = %s AND faction_id = %s", (osoba.id, managed_role))
         curr_secs = cur.fetchone()[0]
-        if curr_secs < secs:
+        if curr_secs < czas_sekundy:
             cur.close(); conn.close()
             return await interaction.response.send_message("❌ Nie można odjąć czasu na wartość ujemną!", ephemeral=True)
-        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (secs, osoba.id, managed_role))
-        msg = f"✅ Odjęto {czas_minuty} minut(y) z czasu {osoba.mention} we frakcji {managed_name}."
+        cur.execute("UPDATE work_stats SET total_seconds = total_seconds - %s WHERE user_id = %s AND faction_id = %s", (czas_sekundy, osoba.id, managed_role))
+        msg = f"✅ Odjęto {czas_sekundy} sekund(y) z czasu {osoba.mention} we frakcji {managed_name}."
 
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(msg)
