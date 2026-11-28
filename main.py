@@ -284,4 +284,3 @@ async def sync(ctx):
 async def on_ready():
     print(f"✅ Bot {bot.user} online.")
 
-bot.run(os.getenv("DISCORD_TOKEN"))
