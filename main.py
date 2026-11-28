@@ -1,10 +1,4 @@
-import discord
-from discord import app_commands
-from discord.ext import commands, tasks
-import os
-import random
-import psycopg2
-from datetime import datetime, timedelta
+
 
 # --- KONFIGURACJA ID ---
 ID_ROLA_RP = 1505624602125013013
